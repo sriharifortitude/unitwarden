@@ -155,6 +155,9 @@ func TestRootServicesAndCapabilities(t *testing.T) {
 	if fs := run(with("AmbientCapabilities", "AmbientCapabilities=~CAP_CHOWN")); !has(fs, "UW016", "high", "cap_sys_admin") {
 		t.Fatal("~ on an empty ambient set grants nearly everything:", list(fs))
 	}
+	if fs := run(with("AmbientCapabilities", "AmbientCapabilities=~")); !has(fs, "UW016", "high", "cap_sys_admin") {
+		t.Fatal(`"~" alone grants every capability:`, list(fs))
+	}
 	kept := strings.Replace(with("CapabilityBoundingSet", "CapabilityBoundingSet=CAP_SYS_ADMIN CAP_CHOWN"), "User=app\n", "User=root\n", 1)
 	if fs := run(kept); !has(fs, "UW016", "medium", "cap_sys_admin") {
 		t.Fatal(list(fs))

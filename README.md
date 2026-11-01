@@ -75,7 +75,7 @@ also what CI compares with a real systemd.
 ## Usage
 
 ```bash
-go install github.com/sriharifortitude/unitwarden/cmd/unitwarden@v0.1.0
+go install github.com/sriharifortitude/unitwarden/cmd/unitwarden@v0.1.1
 
 unitwarden --root /                          # every service on this machine
 unitwarden --root / nginx.service ssh.service
@@ -144,10 +144,19 @@ go test ./...                    # unit, rule and CLI tests, and a fuzz target f
 path of a machine running systemd, runs `daemon-reload`, and requires each of the 22 values
 `unitwarden --effective` prints per unit to equal `systemctl show`. Three of the six units,
 in `testdata/differential`, exist only to ask systemd about corner cases. There is no
-systemd on the Windows machine this was written on, so this runs in CI.
+systemd on the Windows machine this was written on, so this runs in CI. On systemd 259
+(Ubuntu), all 132 values for the six units agree.
 
-The first run, on systemd 259 (Ubuntu), agreed on 105 of the 110 values for the first five
-units. The five that differed were four mistakes in my model and one spelling:
+That took two runs, and the fixtures changed the tool before either. Working out what systemd
+should print for each corner case, from what I know of its parser, showed four places where
+my first model was wrong: it treated an unreadable line as resetting to the default (systemd
+keeps the earlier value), it ignored everything `DynamicUser=` implies, it merged `~CAP_X`
+into an empty ambient set instead of replacing the set, and it kept
+`RestrictAddressFamilies=none` in force after a later deny line. The first two would have
+produced false findings on ordinary units.
+
+The first run, with five units, agreed on 105 of 110 values. The five that differed were four
+more mistakes and one spelling:
 
 - an empty `ProtectHome=` line is ignored, not a reset, so `read-only` stayed;
 - a prefix drop-in in `/etc` hid the unit's own drop-in of the same name in `/usr/lib`: the
@@ -156,36 +165,33 @@ units. The five that differed were four mistakes in my model and one spelling:
   `ProtectClock=yes` took `CAP_SYS_TIME` and `CAP_WAKE_ALARM`;
 - an unset `RestrictAddressFamilies` is printed as `~`, an empty deny list.
 
-All four are fixed. The bounding set fix changed a rule too: a root service with
-`PrivateDevices=yes` and no bounding set no longer had "every capability", which had hidden a
-second gap, an explicit `CapabilityBoundingSet=~` that was never reported. A sixth unit,
-`uw-reset`, and two more drop-ins were added afterwards to ask what the first run left open:
-an empty `ProtectSystem=` and `User=`, what `ProtectKernelModules=` and `ProtectKernelLogs=`
-remove, and which of two same-named drop-ins wins inside one directory. That run is pending.
+The bounding set fix changed a rule too: a root service with `PrivateDevices=yes` and no
+bounding set no longer had "every capability", and reworking UW016 for that showed an
+explicit `CapabilityBoundingSet=~` had never been reported. For the second run I added a sixth
+unit and two drop-ins to ask what the first left open, and wrote down the answers I expected
+first: an empty `ProtectSystem=` is ignored and an empty `User=` resets, `ProtectKernelModules=`
+and `ProtectKernelLogs=` take `CAP_SYS_MODULE` and `CAP_SYSLOG` out, and inside one directory
+the unit's own drop-in beats a prefix drop-in of the same name. All of them held.
 
-Writing those fixtures changed the tool before it ever ran. Working out what systemd should
-print for each corner case, from what I know of its parser, showed four places where my first
-model was wrong: it treated an unreadable
-line as resetting to the default (systemd keeps the earlier value), it ignored everything
-`DynamicUser=` implies, it merged `~CAP_X` into an empty ambient set instead of replacing the
-set, and it kept `RestrictAddressFamilies=none` in force after a later deny line. The first two
-would have produced false findings on ordinary units.
-
-**Mutation testing.** I broke the code in 50 places on purpose. On the first run, 12 mutants
-survived, 6 did not compile (I rewrote them so they do) and 1 did not match the source. One
-survivor marked a redundant check in UW021, which I deleted along with its mutant. The others
-were test gaps: continuation lines were checked with `Contains`, so a kept backslash passed;
-the drop-in order test set a different key in each file, so order never mattered; a name on
-the search path twice, a `~` line after `CapabilityBoundingSet=~`, `User=0`,
-`ProtectSystem=yes`, a 32-bit system call architecture and a quoted `Environment=` name were
-untested; and no drop-in test had one going from `full` to `yes`, or one that strengthens a
-setting. The rewritten mutants then found two more: a `UMask` that blocks group writes but not
-world writes, and one above 07777, which systemd rejects. All 49 are caught now except one:
+**Mutation testing.** I broke the code on purpose, 50 ways at first. On the first run, 12
+mutants survived, 6 did not compile (I rewrote them so they do) and 1 did not match the
+source. One survivor marked a redundant check in UW021, which I deleted along with its mutant.
+The others were test gaps: continuation lines were checked with `Contains`, so a kept
+backslash passed; the drop-in order test set a different key in each file, so order never
+mattered; a name on the search path twice, a `~` line after `CapabilityBoundingSet=~`,
+`User=0`, `ProtectSystem=yes`, a 32-bit system call architecture and a quoted `Environment=`
+name were untested; and no drop-in test had one going from `full` to `yes`, or one that
+strengthens a setting. The rewritten mutants found two more: a `UMask` that blocks group
+writes but not world writes, and one above 07777, which systemd rejects. After the systemd
+fixes I added mutants for the new code (56 in all), and one more gap showed:
+`AmbientCapabilities=~` alone, which grants everything. All 56 are caught now except one:
 masking is detected through a symlink to `/dev/null`, Windows would not let the test create
 one, so that test skips here and runs only on Linux.
 
 ## Not tested, and not done
 
+- Only systemd 259 has been compared. Older releases, such as 249 in Ubuntu 22.04, parse some
+  of these settings differently, and the model follows 259.
 - Units generated at boot by systemd generators, and properties set with
   `systemctl set-property`, are not read: they live outside the unit search path.
 - User units (`systemctl --user`) and their search path are not supported.
