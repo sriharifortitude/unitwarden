@@ -67,9 +67,12 @@ func Load(root, name string) (*Unit, error) {
 		}
 	}
 	dropins := dropinDirs(name)
-	chosen := map[string]string{} // drop-in file name -> path, first (highest priority) wins
-	for _, d := range dropins {
-		for _, dir := range SearchPath {
+	// Drop-in file name -> path; the first one seen wins. The search path is the outer loop:
+	// systemd 259 lets /etc/systemd/system/a-.service.d/x.conf hide
+	// /usr/lib/systemd/system/a-b.service.d/x.conf (scripts/differential.sh checks this).
+	chosen := map[string]string{}
+	for _, dir := range SearchPath {
+		for _, d := range dropins {
 			entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(dir), d))
 			if err != nil {
 				continue

@@ -8,14 +8,15 @@ A systemd service is rarely one file. systemd finds the unit file first on its s
 (`/etc`, `/run`, `/usr/local/lib`, `/usr/lib`, in that order), then applies every drop-in that
 matches: the unit's own `foo.service.d/`, a template's `foo@.service.d/`, prefix directories
 for dashed names (`a-b-.service.d/`, `a-.service.d/`), and the type-wide `service.d/`. A
-drop-in in a higher-priority directory hides one of the same name in a lower one, and
-drop-ins apply in file name order. `systemctl edit` writes an `override.conf` there, which is
+drop-in in a higher-priority directory hides one of the same name in a lower one, even a
+prefix drop-in in `/etc` hiding the unit's own in `/usr/lib`, and drop-ins apply in file name
+order. `systemctl edit` writes an `override.conf` there, which is
 how most local changes are made.
 
 The rules for combining lines are not uniform either:
 
-- Most settings: the last line wins. An empty line resets some (`User=`, `ProtectSystem=`)
-  and is ignored as invalid by others (`NoNewPrivileges=`, `UMask=`).
+- Most settings: the last line wins. An empty line resets some (`User=`) and is ignored as
+  invalid by others (`ProtectHome=`, `NoNewPrivileges=`, `UMask=`).
 - A line systemd cannot read is logged and ignored, so the value before it stays.
   `ProtectSystem=strict` followed by `ProtectSystem=banana` is still strict.
 - `CapabilityBoundingSet=` and `AmbientCapabilities=` merge across lines, `~` subtracts, and
@@ -26,7 +27,12 @@ The rules for combining lines are not uniform either:
   lines of the other kind take entries back out.
 - `DynamicUser=yes` makes systemd force `ProtectSystem=strict`, `ProtectHome=read-only` (when
   it was `no`), `PrivateTmp`, `NoNewPrivileges` and `RestrictSUIDSGID` on, whatever the unit
-  says, and name the user after the unit.
+  says, and name the user after the unit. `PrivateDevices=`, `ProtectClock=`,
+  `ProtectKernelModules=` and `ProtectKernelLogs=` take the capabilities they make useless out
+  of the bounding set.
+
+Several of these I first got wrong. The differential test below found three of them on its
+first run: the empty `ProtectHome=` line, the drop-in priority, and the bounding set.
 
 A checker that reads one file misses all of this. The case that matters most is a vendor
 unit that is well hardened, plus an `override.conf` from a debugging session that sets

@@ -9,7 +9,7 @@ User=nobody
 # An unreadable value is ignored: strict stays.
 ProtectSystem=strict
 ProtectSystem=banana
-# An empty value resets to the default.
+# An empty value is ignored too: systemd 259 keeps read-only.
 ProtectHome=read-only
 ProtectHome=
 # An unreadable or empty boolean is ignored.

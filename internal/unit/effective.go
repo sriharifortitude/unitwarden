@@ -26,7 +26,7 @@ func (u *Unit) Get(section, key, def string) (string, *Assignment) {
 // GetBool is Get for a boolean setting. systemd ignores a line it cannot read as a boolean, an
 // empty one included, so the value before that line stays in force.
 func (u *Unit) GetBool(section, key string, def bool) (bool, *Assignment) {
-	v, a := u.getValid(section, key, "", false, func(s string) bool { _, ok := Bool(s); return ok })
+	v, a := u.getValid(section, key, "", func(s string) bool { _, ok := Bool(s); return ok })
 	if v == "" {
 		return def, a
 	}
@@ -35,22 +35,29 @@ func (u *Unit) GetBool(section, key string, def bool) (bool, *Assignment) {
 }
 
 // getValid is Get for a setting systemd checks: it skips the lines valid rejects, as systemd
-// logs and ignores those. An empty line resets to def when emptyResets, and is skipped otherwise.
-func (u *Unit) getValid(section, key, def string, emptyResets bool, valid func(string) bool) (string, *Assignment) {
+// logs and ignores those. An empty line is skipped too: for booleans, ProtectSystem=,
+// ProtectHome= and UMask=, systemd treats it as unreadable rather than as a reset.
+func (u *Unit) getValid(section, key, def string, valid func(string) bool) (string, *Assignment) {
 	v, from := def, (*Assignment)(nil)
 	for i := range u.Assignments {
 		a := &u.Assignments[i]
-		if a.Section != section || a.Key != key {
-			continue
-		}
-		switch {
-		case a.Value == "" && emptyResets:
-			v, from = def, a
-		case a.Value != "" && valid(a.Value):
+		if a.Section == section && a.Key == key && a.Value != "" && valid(a.Value) {
 			v, from = a.Value, a
 		}
 	}
 	return v, from
+}
+
+// boundingRemovals are the capabilities systemd takes out of the bounding set when a
+// protection is on (unit_patch_contexts in src/core/unit.c).
+var boundingRemovals = []struct {
+	key  string
+	caps []string
+}{
+	{"PrivateDevices", []string{"cap_mknod", "cap_sys_rawio"}},
+	{"ProtectClock", []string{"cap_sys_time", "cap_wake_alarm"}},
+	{"ProtectKernelModules", []string{"cap_sys_module"}},
+	{"ProtectKernelLogs", []string{"cap_syslog"}},
 }
 
 // ValidProtectSystem reports whether systemd accepts a ProtectSystem= value.
@@ -108,8 +115,27 @@ func normCap(s string) string {
 // replaces the set when it lists nothing ("" is no capabilities, "~" is all of them) or when the
 // set is still untouched; otherwise lines merge, and a "~" line removes what it lists. Ambient
 // capabilities count as untouched whenever the set is empty again, so "~CAP_X" on an empty
-// ambient set grants everything except CAP_X.
+// ambient set grants everything except CAP_X. systemd then removes a few capabilities from the
+// bounding set for PrivateDevices=, ProtectClock=, ProtectKernelModules= and ProtectKernelLogs=.
 func (u *Unit) Capabilities(key string) CapSet {
+	set := u.capabilityLines(key)
+	if key != "CapabilityBoundingSet" {
+		return set
+	}
+	for _, r := range boundingRemovals {
+		if on, _ := u.GetBool("Service", r.key, false); on {
+			if set.All {
+				set.All, set.Caps = false, allCaps()
+			}
+			for _, c := range r.caps {
+				delete(set.Caps, c)
+			}
+		}
+	}
+	return set
+}
+
+func (u *Unit) capabilityLines(key string) CapSet {
 	bounding := key == "CapabilityBoundingSet"
 	set := CapSet{All: bounding, Caps: map[string]bool{}}
 	untouched := true
@@ -289,7 +315,7 @@ func (u *Unit) Value(key string) (string, *Assignment) {
 		if key == "ProtectHome" {
 			valid = ValidProtectHome
 		}
-		v, a := u.getValid("Service", key, "no", true, valid)
+		v, a := u.getValid("Service", key, "no", valid)
 		if b, ok := Bool(v); ok {
 			v = yesNo[b]
 		}
@@ -310,7 +336,7 @@ func (u *Unit) Value(key string) (string, *Assignment) {
 		f := u.AddressFamilies()
 		switch {
 		case !f.Set:
-			return "", f.From
+			return "~", f.From
 		case !f.Deny && len(f.List) == 0:
 			return "none", f.From
 		case f.Deny:
@@ -318,7 +344,7 @@ func (u *Unit) Value(key string) (string, *Assignment) {
 		}
 		return joinSorted(f.List), f.From
 	case "UMask":
-		v, a := u.getValid("Service", "UMask", "0022", false, ValidMode)
+		v, a := u.getValid("Service", "UMask", "0022", ValidMode)
 		n, _ := strconv.ParseUint(v, 8, 32)
 		return fmt.Sprintf("%04o", n), a
 	case "PrivateTmp", "NoNewPrivileges", "RestrictSUIDSGID":

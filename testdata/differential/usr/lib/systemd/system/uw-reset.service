@@ -1,0 +1,13 @@
+# Not a real service: asks systemd how it reads empty lines for User= and ProtectSystem=, and
+# what ProtectKernelModules= and ProtectKernelLogs= do to the capability bounding set.
+[Unit]
+Description=unitwarden differential: resets and bounding set removals
+
+[Service]
+ExecStart=/usr/bin/true
+User=nobody
+User=
+ProtectSystem=full
+ProtectSystem=
+ProtectKernelModules=yes
+ProtectKernelLogs=yes

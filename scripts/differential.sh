@@ -27,7 +27,7 @@ sudo systemctl daemon-reload
 systemctl --version | head -1
 
 status=0
-for u in uw-backup.service uw-hardened.service uw-webapp.service uw-edge.service uw-dynamic.service; do
+for u in uw-backup.service uw-hardened.service uw-webapp.service uw-edge.service uw-dynamic.service uw-reset.service; do
   "$BIN" --root / --effective "$u" | tail -n +2 > "$tmp/mine.txt"
   props=$(cut -d= -f1 "$tmp/mine.txt" | paste -sd, -)
   systemctl show --property="$props" "$u" > "$tmp/systemd.txt"

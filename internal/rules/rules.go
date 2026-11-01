@@ -211,13 +211,9 @@ func setting(key string, a *unit.Assignment) string {
 func (c *checker) capabilities() {
 	bounding := c.u.Capabilities("CapabilityBoundingSet")
 	ambient := c.u.Capabilities("AmbientCapabilities")
-	root := c.runsAsRoot()
-	if bounding.All && root {
-		c.add("UW016", "medium", bounding.From, "CapabilityBoundingSet is not limited and the service runs as root: it keeps every capability")
-	}
 	var granted []string
-	for cp := range ambient.Caps {
-		if why, ok := dangerousCaps[cp]; ok {
+	for cp, why := range dangerousCaps {
+		if ambient.Has(cp) {
 			granted = append(granted, cp+" ("+why+")")
 		}
 	}
@@ -225,15 +221,23 @@ func (c *checker) capabilities() {
 	if len(granted) > 0 {
 		c.add("UW016", "high", ambient.From, "AmbientCapabilities= grants %s", strings.Join(granted, ", "))
 	}
-	if !bounding.All {
+	if !c.runsAsRoot() {
+		return
+	}
+	switch {
+	case bounding.All:
+		c.add("UW016", "medium", bounding.From, "CapabilityBoundingSet is not limited and the service runs as root: it keeps every capability")
+	case bounding.From == nil:
+		// Not set, but PrivateDevices= and similar settings took a few capabilities out.
+		c.add("UW016", "medium", nil, "CapabilityBoundingSet is not limited and the service runs as root: it keeps every capability its sandbox settings do not remove, cap_sys_admin included")
+	default:
 		var kept []string
-		for cp := range bounding.Caps {
-			if cp == "cap_sys_admin" || cp == "cap_sys_module" || cp == "cap_sys_ptrace" {
+		for _, cp := range []string{"cap_sys_admin", "cap_sys_module", "cap_sys_ptrace"} {
+			if bounding.Has(cp) {
 				kept = append(kept, cp)
 			}
 		}
-		sort.Strings(kept)
-		if len(kept) > 0 && root {
+		if len(kept) > 0 {
 			c.add("UW016", "medium", bounding.From, "CapabilityBoundingSet= keeps %s, which make most other limits easy to escape", strings.Join(kept, ", "))
 		}
 	}

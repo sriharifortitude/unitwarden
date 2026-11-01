@@ -94,15 +94,17 @@ Exit codes: 0 nothing at or above `--fail-on` (default medium), 1 at least one f
   first unit file found wins, and a link to `/dev/null` means masked.
 - **Drop-ins**: `foo.service.d/`, the template's `foo@.service.d/`, the prefix directories of
   a dashed name (`a-b-.service.d/`, `a-.service.d/`) and `service.d/`, in every directory of
-  the search path. A drop-in hides one of the same file name in a lower-priority directory;
-  all of them apply in file name order.
+  the search path. A drop-in hides one of the same file name in a lower-priority directory,
+  even when the hidden one is in a more specific drop-in directory; all of them apply in file
+  name order.
 - **Repeated lines**: the last valid line wins. A line systemd cannot read is ignored and
-  the earlier value stays. An empty line resets `User=`, `ProtectSystem=` and `ProtectHome=`,
-  and is ignored for booleans and `UMask=`. Capability sets and address families merge
-  across lines with `~` subtracting, including systemd's rule for when a line replaces the
-  set instead of merging.
-- **`DynamicUser=yes`** forces `ProtectSystem=strict`, `ProtectHome=read-only` (when it was
-  `no`), `PrivateTmp`, `NoNewPrivileges` and `RestrictSUIDSGID` on, as systemd does.
+  the earlier value stays. An empty line resets `User=` and is ignored for the protection
+  settings and `UMask=`. Capability sets and address families merge across lines with `~`
+  subtracting, including systemd's rule for when a line replaces the set instead of merging.
+- **Implied settings**: `DynamicUser=yes` forces `ProtectSystem=strict`,
+  `ProtectHome=read-only` (when it was `no`), `PrivateTmp`, `NoNewPrivileges` and
+  `RestrictSUIDSGID` on. `PrivateDevices`, `ProtectClock`, `ProtectKernelModules` and
+  `ProtectKernelLogs` take their capabilities out of the bounding set.
 
 [ADR 1](docs/adr/0001-model-systemds-loading-not-the-file.md) has the reasoning and the
 corner cases.
@@ -140,10 +142,26 @@ go test ./...                    # unit, rule and CLI tests, and a fuzz target f
 
 **Against systemd.** `scripts/differential.sh` installs every fixture into the real search
 path of a machine running systemd, runs `daemon-reload`, and requires each of the 22 values
-`unitwarden --effective` prints per unit to equal `systemctl show`. Two of the five units,
+`unitwarden --effective` prints per unit to equal `systemctl show`. Three of the six units,
 in `testdata/differential`, exist only to ask systemd about corner cases. There is no
-systemd on the Windows machine this was written on, so this runs in CI. It has been written
-but not yet run; this paragraph will say what it found.
+systemd on the Windows machine this was written on, so this runs in CI.
+
+The first run, on systemd 259 (Ubuntu), agreed on 105 of the 110 values for the first five
+units. The five that differed were four mistakes in my model and one spelling:
+
+- an empty `ProtectHome=` line is ignored, not a reset, so `read-only` stayed;
+- a prefix drop-in in `/etc` hid the unit's own drop-in of the same name in `/usr/lib`: the
+  search path decides before the drop-in directory does, the opposite of my guess;
+- `PrivateDevices=yes` took `CAP_MKNOD` and `CAP_SYS_RAWIO` out of the bounding set, and
+  `ProtectClock=yes` took `CAP_SYS_TIME` and `CAP_WAKE_ALARM`;
+- an unset `RestrictAddressFamilies` is printed as `~`, an empty deny list.
+
+All four are fixed. The bounding set fix changed a rule too: a root service with
+`PrivateDevices=yes` and no bounding set no longer had "every capability", which had hidden a
+second gap, an explicit `CapabilityBoundingSet=~` that was never reported. A sixth unit,
+`uw-reset`, and two more drop-ins were added afterwards to ask what the first run left open:
+an empty `ProtectSystem=` and `User=`, what `ProtectKernelModules=` and `ProtectKernelLogs=`
+remove, and which of two same-named drop-ins wins inside one directory. That run is pending.
 
 Writing those fixtures changed the tool before it ever ran. Working out what systemd should
 print for each corner case, from what I know of its parser, showed four places where my first

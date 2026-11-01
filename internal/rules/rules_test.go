@@ -143,8 +143,17 @@ func TestSafeVariants(t *testing.T) {
 
 func TestRootServicesAndCapabilities(t *testing.T) {
 	root := strings.Replace(with("CapabilityBoundingSet", ""), "User=app\n", "", 1)
-	if fs := run(root); !has(fs, "UW016", "medium", "keeps every capability") || !has(fs, "UW001", "medium", "") {
+	if fs := run(root); !has(fs, "UW016", "medium", "its sandbox settings do not remove") || !has(fs, "UW001", "medium", "") {
 		t.Fatal(list(fs))
+	}
+	if fs := run("[Service]\nUser=root\n"); !has(fs, "UW016", "medium", "it keeps every capability") {
+		t.Fatal(list(fs))
+	}
+	if fs := run("[Service]\nCapabilityBoundingSet=CAP_CHOWN\nCapabilityBoundingSet=~\n"); !has(fs, "UW016", "medium", "it keeps every capability") {
+		t.Fatal(`"~" alone keeps every capability:`, list(fs))
+	}
+	if fs := run(with("AmbientCapabilities", "AmbientCapabilities=~CAP_CHOWN")); !has(fs, "UW016", "high", "cap_sys_admin") {
+		t.Fatal("~ on an empty ambient set grants nearly everything:", list(fs))
 	}
 	kept := strings.Replace(with("CapabilityBoundingSet", "CapabilityBoundingSet=CAP_SYS_ADMIN CAP_CHOWN"), "User=app\n", "User=root\n", 1)
 	if fs := run(kept); !has(fs, "UW016", "medium", "cap_sys_admin") {

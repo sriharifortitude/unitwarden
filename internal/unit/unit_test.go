@@ -69,7 +69,7 @@ func TestLastWinsAndEmptyResets(t *testing.T) {
 func TestIgnoredLinesKeepTheEarlierValue(t *testing.T) {
 	u := text(t, "[Service]\nProtectSystem=strict\nProtectSystem=banana\nProtectHome=read-only\nProtectHome=\n"+
 		"PrivateTmp=yes\nPrivateTmp=maybe\nPrivateDevices=yes\nPrivateDevices=\nUMask=0027\nUMask=\nUMask=99999\nUMask=17777\n")
-	for k, want := range map[string]string{"ProtectSystem": "strict", "ProtectHome": "no", "PrivateTmp": "yes", "PrivateDevices": "yes", "UMask": "0027"} {
+	for k, want := range map[string]string{"ProtectSystem": "strict", "ProtectHome": "read-only", "PrivateTmp": "yes", "PrivateDevices": "yes", "UMask": "0027"} {
 		if got := u.Effective(k); got != want {
 			t.Errorf("%s: got %q want %q", k, got, want)
 		}
@@ -151,12 +151,12 @@ func TestAddressFamilies(t *testing.T) {
 	for _, c := range []struct {
 		lines, want string
 	}{
-		{"", ""},
+		{"", "~"},
 		{"RestrictAddressFamilies=AF_UNIX AF_INET", "AF_INET AF_UNIX"},
 		{"RestrictAddressFamilies=AF_UNIX\nRestrictAddressFamilies=AF_INET", "AF_INET AF_UNIX"},
 		{"RestrictAddressFamilies=~AF_PACKET", "~AF_PACKET"},
 		{"RestrictAddressFamilies=AF_UNIX AF_INET\nRestrictAddressFamilies=~AF_INET", "AF_UNIX"},
-		{"RestrictAddressFamilies=AF_UNIX\nRestrictAddressFamilies=", ""},
+		{"RestrictAddressFamilies=AF_UNIX\nRestrictAddressFamilies=", "~"},
 		{"RestrictAddressFamilies=none", "none"},
 	} {
 		u := text(t, "[Service]\n"+c.lines+"\n")
@@ -245,6 +245,41 @@ func TestLoadPrecedence(t *testing.T) {
 	}
 	if !reflect.DeepEqual(names, []string{"05-early.conf", "10-a.conf", "20-b.conf", "30-all.conf"}) {
 		t.Fatalf("drop-ins apply in file name order: %v", u.Files)
+	}
+}
+
+func TestAHigherPriorityDirectoryBeatsAMoreSpecificDropIn(t *testing.T) {
+	// What systemd 259 does (scripts/differential.sh): the search path decides, then the
+	// drop-in directory, most specific first.
+	root := t.TempDir()
+	write(t, root, "usr/lib/systemd/system/a-b.service", "[Service]\n")
+	write(t, root, "usr/lib/systemd/system/a-b.service.d/x.conf", "[Service]\nProtectHostname=yes\n")
+	write(t, root, "etc/systemd/system/a-.service.d/x.conf", "[Service]\nProtectClock=yes\n")
+	write(t, root, "usr/lib/systemd/system/a-b.service.d/y.conf", "[Service]\nLockPersonality=yes\n")
+	write(t, root, "usr/lib/systemd/system/a-.service.d/y.conf", "[Service]\nRestrictRealtime=yes\n")
+	u, err := Load(root, "a-b.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range map[string]string{"ProtectClock": "yes", "ProtectHostname": "no", "LockPersonality": "yes", "RestrictRealtime": "no"} {
+		if got := u.Effective(k); got != want {
+			t.Errorf("%s: got %q want %q (%v)", k, got, want, u.Files)
+		}
+	}
+}
+
+func TestProtectionsShrinkTheBoundingSet(t *testing.T) {
+	c := text(t, "[Service]\nPrivateDevices=yes\nProtectClock=yes\nProtectKernelModules=yes\nProtectKernelLogs=yes\n").Capabilities("CapabilityBoundingSet")
+	for _, gone := range []string{"cap_mknod", "cap_sys_rawio", "cap_sys_time", "cap_wake_alarm", "cap_sys_module", "cap_syslog"} {
+		if c.Has(gone) {
+			t.Errorf("%s is still there", gone)
+		}
+	}
+	if c.All || !c.Has("cap_sys_admin") {
+		t.Fatal("the rest stay")
+	}
+	if amb := text(t, "[Service]\nPrivateDevices=yes\nAmbientCapabilities=CAP_MKNOD\n").Capabilities("AmbientCapabilities"); !amb.Has("cap_mknod") {
+		t.Fatal("only the bounding set shrinks")
 	}
 }
 
