@@ -1,0 +1,17 @@
+# As a package might ship it: a dedicated user and a reasonable sandbox.
+[Unit]
+Description=Example web application
+
+[Service]
+ExecStart=/usr/bin/sleep infinity
+User=www-data
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

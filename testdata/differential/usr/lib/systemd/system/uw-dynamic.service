@@ -1,0 +1,17 @@
+# Not a real service: DynamicUser=yes makes systemd force protections on, whatever the unit
+# says, and pick the user name from the unit name. scripts/differential.sh checks that
+# unitwarden reports the same values.
+[Unit]
+Description=unitwarden differential: what DynamicUser= implies
+
+[Service]
+ExecStart=/usr/bin/true
+DynamicUser=yes
+ProtectSystem=no
+ProtectHome=no
+PrivateTmp=no
+RestrictSUIDSGID=no
+# Ambient capabilities are untouched again once the set is empty, so the last line replaces it.
+AmbientCapabilities=CAP_CHOWN
+AmbientCapabilities=~CAP_CHOWN
+AmbientCapabilities=~CAP_SYS_ADMIN

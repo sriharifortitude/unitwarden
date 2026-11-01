@@ -1,0 +1,29 @@
+# Not a real service: each pair of lines asks systemd how it reads a corner case, and
+# scripts/differential.sh checks that unitwarden reads it the same way.
+[Unit]
+Description=unitwarden differential: ignored and resetting lines
+
+[Service]
+ExecStart=/usr/bin/true
+User=nobody
+# An unreadable value is ignored: strict stays.
+ProtectSystem=strict
+ProtectSystem=banana
+# An empty value resets to the default.
+ProtectHome=read-only
+ProtectHome=
+# An unreadable or empty boolean is ignored.
+PrivateDevices=yes
+PrivateDevices=maybe
+PrivateNetwork=yes
+PrivateNetwork=
+# An empty or out-of-range mask is ignored.
+UMask=0027
+UMask=
+UMask=99999
+# The bounding set is touched after its first line, so the second merges into it.
+CapabilityBoundingSet=~CAP_KILL
+CapabilityBoundingSet=CAP_CHOWN
+# A line after "none" starts a fresh list.
+RestrictAddressFamilies=none
+RestrictAddressFamilies=~AF_PACKET

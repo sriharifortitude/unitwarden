@@ -1,0 +1,6 @@
+[Unit]
+Description=Nightly backup
+
+[Service]
+Type=oneshot
+ExecStart=/home/backup/bin/run-backup.sh
